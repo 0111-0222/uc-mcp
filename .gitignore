@@ -1,0 +1,21 @@
+# Secrets: your logged-in UnknownCheats session. Never commit these.
+cookies.json
+cookies.*.json
+!cookies.example.json
+*.har
+.env
+
+# Local state: page cache, request ledger, search ids
+.cache/
+*.sqlite3
+*.sqlite3-*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/

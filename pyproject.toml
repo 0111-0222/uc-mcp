@@ -1,0 +1,35 @@
+[project]
+name = "uc-mcp"
+version = "1.1.0"
+description = "Read-only, date-aware MCP server for searching the UnknownCheats forum with your own session."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.10,<2",
+    "curl_cffi>=0.7",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".cache"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = [
+    "SIM105",  # try/except/pass reads plainer than contextlib.suppress here
+    "B904",    # UCError wraps curl errors with `from e` where it matters
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["server", "uc_dates", "uc_http", "uc_parse", "uc_render"]
