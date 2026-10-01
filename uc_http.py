@@ -242,10 +242,29 @@ BLOCK_MARKERS = (
     "Checking your browser before accessing",
     "cf-error-details",
 )
-# vBulletin only renders the logout link on some templates, so the reliable
-# signal is the guest security token; the control-panel link corroborates it.
+# Every vBulletin page carries the session's security token: "guest" when
+# logged out, "<unix time>-<sha1>" when logged in. Error and throttle pages use
+# a bare template with no User CP or logout link, so the token is the signal;
+# the links only decide for a page that has no token at all.
 GUEST_TOKEN = 'SECURITYTOKEN = "guest"'
+TOKEN_RE = re.compile(r'SECURITYTOKEN\s*=\s*"([^"]*)"')
 LOGGED_IN_MARKERS = ("usercp.php", "do=logout", "profile.php?do=editprofile")
+# vBulletin rejects a token three hours after the time stamped into it.
+TOKEN_MAX_AGE = 2 * 3600
+# "Your submission could not be processed because the token has expired" /
+# "... because a security token was missing".
+TOKEN_ERROR = re.compile(r"could not be processed because [^.<]{0,30}token", re.I)
+
+
+def token_fresh(token: str | None, now: float | None = None) -> bool:
+    """True for a logged-in token young enough for the forum to accept."""
+    if not token or token == "guest":
+        return False
+    try:
+        issued = int(token.split("-", 1)[0])
+    except ValueError:
+        return False
+    return ((now or time.time()) - issued) < TOKEN_MAX_AGE
 
 
 class Client:
@@ -310,7 +329,10 @@ class Client:
             raise BlockedError(
                 "Redirected to login: the forum session cookie has expired. Re-export "
                 "cookies.json and call uc_session(reload=True).")
-        if GUEST_TOKEN in text or not any(m in text for m in LOGGED_IN_MARKERS):
+        m = TOKEN_RE.search(text)
+        token = m.group(1) if m else None
+        if token in ("guest", "") or (
+                token is None and not any(mk in text for mk in LOGGED_IN_MARKERS)):
             raise BlockedError(
                 "Page loaded but the session is browsing as a guest. Most of this forum, "
                 "search included, is login-gated. Re-export cookies.json including "
@@ -376,7 +398,15 @@ class Client:
             raise UCError(f"HTTP {resp.status_code} for {final}")
         self._check(text, final)
         self._learn_tz(text)
+        self._learn_token(text)
         return text, final
+
+    def _learn_token(self, text: str) -> None:
+        """Every live page hands out a current token; keep the newest one."""
+        m = TOKEN_RE.search(text)
+        if m and token_fresh(m.group(1)) and m.group(1) != self._token:
+            self._token = m.group(1)
+            self.store.meta_set("securitytoken", self._token)
 
     @staticmethod
     def _drop_superseded_cookies(session) -> None:
@@ -395,22 +425,36 @@ class Client:
             jar.clear(c.domain, c.path, c.name)
 
     # -- vBulletin security token ---------------------------------------
+    def token_status(self) -> str:
+        token = self._token or self.store.meta_get("securitytoken")
+        if not token:
+            return "none yet (fetched on the first search)"
+        try:
+            age = int((time.time() - int(token.split("-", 1)[0])) // 60)
+        except ValueError:
+            return "unreadable — replaced automatically on the next search"
+        if token_fresh(token):
+            return f"fresh ({age}m old)"
+        return f"stale ({age}m old) — replaced automatically on the next search"
+
     def security_token(self, refresh: bool = False) -> str:
-        """vBulletin requires a per-session token on every search POST."""
-        if self._token and not refresh:
-            return self._token
-        cached = self.store.meta_get("securitytoken")
-        if cached and not refresh:
-            self._token = cached
-            return cached
-        page = self.get("search.php", kind="meta", ttl_key="index", refresh=refresh)
-        m = re.search(r'SECURITYTOKEN\s*=\s*"([^"]+)"', page.text)
-        if not m or m.group(1) in ("guest", ""):
+        """vBulletin requires a per-session token on every search POST.
+
+        Tokens expire, so one is reused only while young, and a new one always
+        comes from a live page: a cached search.php outlives the token in it.
+        """
+        if not refresh:
+            # Other server processes share the store and may hold a newer one.
+            for token in (self._token, self.store.meta_get("securitytoken")):
+                if token_fresh(token):
+                    self._token = token
+                    return token
+        self._token = None
+        self.get("search.php", kind="meta", refresh=True)  # _send learns the token
+        if not self._token:
             raise BlockedError(
                 "No logged-in security token on search.php — the session cookie is not "
                 "authenticating. Re-export cookies.json.")
-        self._token = m.group(1)
-        self.store.meta_set("securitytoken", self._token)
         return self._token
 
 
