@@ -131,3 +131,16 @@ def test_blocked_and_guest_pages_are_detected(client):
     with pytest.raises(uc_http.BlockedError, match="login"):
         client._check("", uc_http.BASE + "login.php?do=login")
     client._check('<a href="usercp.php">User CP</a>', uc_http.BASE)
+
+
+def test_rotated_session_cookie_replaces_the_exported_one(client):
+    # The forum rotates bbsessionhash host-only on www; sending both made the
+    # session flip to guest at random.
+    s = client._session
+    s.cookies.set("bbsessionhash", "rotated", domain="www.unknowncheats.me")
+    s.cookies.set("bbsessionhash", "evil", domain="evil.com")
+    client._drop_superseded_cookies(s)
+    got = {(c.domain, c.name): c.value for c in s.cookies.jar}
+    assert got[("www.unknowncheats.me", "bbsessionhash")] == "rotated"
+    assert (uc_http.COOKIE_DOMAIN, "bbsessionhash") not in got
+    assert got[(uc_http.COOKIE_DOMAIN, "cf_clearance")] == "test-clearance"

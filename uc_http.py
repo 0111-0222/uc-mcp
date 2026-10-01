@@ -360,6 +360,7 @@ class Client:
         except Exception as e:  # network/TLS/timeout all surface as readable text
             raise UCError(f"request failed: {type(e).__name__}: {e}") from e
 
+        self._drop_superseded_cookies(session)
         text, final = resp.text, str(resp.url)
         # The cookies cannot follow a redirect off-site, but the page it lands on
         # is still not forum content and must not reach the model as if it were.
@@ -376,6 +377,22 @@ class Client:
         self._check(text, final)
         self._learn_tz(text)
         return text, final
+
+    @staticmethod
+    def _drop_superseded_cookies(session) -> None:
+        """Keep one copy of each cookie: the one the forum most recently set.
+
+        The exported cookies are pinned to COOKIE_DOMAIN, but when the forum
+        rotates a session it sets the new value host-only on www. Both then go
+        out on every request, the forum may honour the stale bbsessionhash, and
+        the page renders as a guest until the next reload.
+        """
+        jar = session.cookies.jar
+        fresh = {c.name for c in jar
+                 if c.domain != COOKIE_DOMAIN and c.domain.endswith(HOST)}
+        stale = [c for c in jar if c.domain == COOKIE_DOMAIN and c.name in fresh]
+        for c in stale:
+            jar.clear(c.domain, c.path, c.name)
 
     # -- vBulletin security token ---------------------------------------
     def security_token(self, refresh: bool = False) -> str:
