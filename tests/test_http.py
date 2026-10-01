@@ -4,6 +4,8 @@ reach an endpoint that changes account state."""
 
 import http.server
 import threading
+import time
+import types
 
 import pytest
 from curl_cffi.const import CurlOpt
@@ -144,3 +146,44 @@ def test_rotated_session_cookie_replaces_the_exported_one(client):
     assert got[("www.unknowncheats.me", "bbsessionhash")] == "rotated"
     assert (uc_http.COOKIE_DOMAIN, "bbsessionhash") not in got
     assert got[(uc_http.COOKIE_DOMAIN, "cf_clearance")] == "test-clearance"
+
+
+def _page(token: str, body: str = "") -> str:
+    return f'<script>var SECURITYTOKEN = "{token}";</script>{body}'
+
+
+def test_error_template_with_a_logged_in_token_is_not_guest(client):
+    # Error and throttle pages have no User CP or logout link; reading them as
+    # a guest page hid "token has expired" behind a bogus login error.
+    expired = _page(f"{int(time.time())}-abc", "Your submission could not be "
+                    "processed because the token has expired.")
+    client._check(expired, uc_http.BASE + "search.php?do=process")
+    assert uc_http.TOKEN_ERROR.search(expired)
+    with pytest.raises(uc_http.BlockedError, match="guest"):
+        client._check(_page("guest"), uc_http.BASE)
+    with pytest.raises(uc_http.BlockedError, match="guest"):
+        client._check("<html>no token, no links</html>", uc_http.BASE)
+
+
+def test_token_freshness():
+    now = time.time()
+    assert uc_http.token_fresh(f"{int(now - 60)}-abc", now)
+    assert not uc_http.token_fresh(f"{int(now - 3 * 3600)}-abc", now)
+    for bad in (None, "", "guest", "junk"):
+        assert not uc_http.token_fresh(bad, now)
+
+
+def test_stale_token_is_replaced_from_a_live_page(client, monkeypatch):
+    now = int(time.time())
+    stale, live = f"{now - 4 * 3600}-stale", f"{now - 5}-live"
+    client.store.meta_set("securitytoken", stale)
+    # A cached search.php outlives the token in it; it must not be the source.
+    client.store.put("GET " + uc_http.BASE + "search.php",
+                     uc_http.BASE + "search.php", _page(stale))
+    monkeypatch.setattr(client.limiter, "acquire", lambda kind: None)
+    monkeypatch.setattr(client._session, "get", lambda url, **kw: types.SimpleNamespace(
+        text=_page(live), url=url, status_code=200))
+
+    assert client.security_token() == live
+    assert client.store.meta_get("securitytoken") == live
+    assert client.token_status().startswith("fresh")

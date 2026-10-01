@@ -24,6 +24,7 @@ from uc_http import (
     BUDGET_DAY,
     BUDGET_HOUR,
     INTERVALS,
+    TOKEN_ERROR,
     TTL,
     BlockedError,
     BudgetError,
@@ -216,7 +217,7 @@ def uc_search(query: str, forum: str = "", since: str = "any", sort: str = "newe
         got = c.post("search.php?do=process", data)
         html, url = got.text, got.url
 
-        if "SECURITYTOKEN" in html and "invalid" in html[:3000].lower():
+        if TOKEN_ERROR.search(html):
             data["securitytoken"] = c.security_token(refresh=True)
             got = c.post("search.php?do=process", data)
             html, url = got.text, got.url
@@ -376,6 +377,7 @@ def uc_session(reload: bool = False, clear_cache: bool = False) -> str:
     info = {
         "session": probe,
         "cookies": ", ".join(c.cookie_names) or "none",
+        "search_token": c.token_status(),
         "cf_clearance": "present" if c.has_clearance() else
                         "MISSING — Cloudflare will block every request",
         "bbpassword": ("present — a long-lived login token; it can be left out of "

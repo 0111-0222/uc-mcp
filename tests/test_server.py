@@ -2,6 +2,8 @@
 schemas, argument validation and error handling."""
 
 import asyncio
+import time
+import types
 
 import pytest
 
@@ -81,3 +83,30 @@ def test_render_thread_points_at_last_page(fixture, now):
     out = R.thread(posts, meta, "x/1-a.html", 1, now)
     assert 'uc_thread("x/1-a.html", page="last")' in out
     assert "<- ANCIENT" in out
+
+
+def test_search_retries_once_with_a_new_token(monkeypatch, fixture):
+    c = server.client()
+    now = int(time.time())
+    monkeypatch.setattr(c.limiter, "acquire", lambda kind: None)
+    c.store.meta_set("securitytoken", f"{now - 60}-old")
+    sent = []
+
+    def post(url, data=None, **kw):
+        sent.append(data["securitytoken"])
+        if len(sent) == 1:
+            text = (f'var SECURITYTOKEN = "{now}-new"; Your submission could not '
+                    "be processed because the token has expired.")
+        else:
+            text = fixture("search_posts.html")
+        return types.SimpleNamespace(text=text, url=url, status_code=200)
+
+    def get(url, **kw):
+        return types.SimpleNamespace(
+            text=f'var SECURITYTOKEN = "{now}-new";', url=url, status_code=200)
+
+    monkeypatch.setattr(c._session, "post", post)
+    monkeypatch.setattr(c._session, "get", get)
+    out = server.uc_search("widowmaker", since="year")
+    assert sent == [f"{now - 60}-old", f"{now}-new"]
+    assert not out.startswith("uc-mcp error"), out
