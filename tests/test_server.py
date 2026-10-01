@@ -110,3 +110,25 @@ def test_search_retries_once_with_a_new_token(monkeypatch, fixture):
     out = server.uc_search("widowmaker", since="year")
     assert sent == [f"{now - 60}-old", f"{now}-new"]
     assert not out.startswith("uc-mcp error"), out
+
+
+@pytest.mark.parametrize("since,days", [
+    ("any", "0"), ("week", "7"), ("2weeks", "14"), ("month", "30"),
+    ("3months", "90"), ("6months", "180"), ("year", "365"),
+])
+def test_since_is_sent_as_a_day_count(monkeypatch, fixture, since, days):
+    # Words like "lastyear" are not among vBulletin's searchdate options and
+    # were silently searched as "any date".
+    c = server.client()
+    monkeypatch.setattr(c.limiter, "acquire", lambda kind: None)
+    c.store.meta_set("securitytoken", f"{int(time.time())}-tok")
+    sent = {}
+
+    def post(url, data=None, **kw):
+        sent.update(data)
+        return types.SimpleNamespace(
+            text=fixture("search_posts.html"), url=url, status_code=200)
+
+    monkeypatch.setattr(c._session, "post", post)
+    server.uc_search(f"widowmaker {since}", since=since)
+    assert sent["searchdate"] == days

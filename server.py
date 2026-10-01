@@ -44,9 +44,11 @@ for stream in (sys.stdout, sys.stderr):
 
 mcp = FastMCP("unknowncheats")
 
+# vBulletin's searchdate takes a day count (its own <select> offers exactly
+# these); any other value is silently treated as "any date".
 SINCE = {
-    "any": "0", "week": "lastweek", "2weeks": "twoweeks", "month": "lastmonth",
-    "3months": "threemonth", "6months": "sixmonth", "year": "lastyear",
+    "any": "0", "week": "7", "2weeks": "14", "month": "30",
+    "3months": "90", "6months": "180", "year": "365",
 }
 SORTS = {"newest": ("lastpost", "descending"), "oldest": ("lastpost", "ascending"),
          "replies": ("replycount", "descending"), "views": ("views", "descending")}
@@ -187,7 +189,7 @@ def uc_search(query: str, forum: str = "", since: str = "any", sort: str = "newe
 
     # A server-side searchid serves every page of a query as a cheap cached
     # read, skipping both the 15s throttle and the forum's expensive re-query.
-    key = f"searchid:{query}|{forum}|{since}|{sort}|{mode}|{title_only}"
+    key = f"searchid:{query}|{forum}|{SINCE[since]}d|{sort}|{mode}|{title_only}"
     sid = _search_id(key)
     html = url = None
     if sid:
