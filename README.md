@@ -18,7 +18,7 @@ because on this forum an old answer is usually a wrong one.
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Install](#install) · [Cookies](#2-export-your-cookies) · [Usage](#usage) ·
+[Install](#install) · [Cookies](#2-copy-your-cookies) · [Usage](#usage) ·
 [Account safety](#account-safety) · [Troubleshooting](#troubleshooting)
 
 </div>
@@ -94,16 +94,23 @@ claude mcp add --scope user unknowncheats -- uv run --directory "$PWD" server.py
 
 </details>
 
-### 2. Export your cookies
+### 2. Copy your cookies
 
-1. Log into [unknowncheats.me](https://www.unknowncheats.me/forum/) in your
+No browser extension needed, the browser's own dev tools have everything.
+
+1. Open `cookies.json` in an editor and keep it open.
+2. Log into [unknowncheats.me](https://www.unknowncheats.me/forum/) in your
    normal browser.
-2. Install a cookie exporter such as
-   [Cookie-Editor](https://cookie-editor.com), open it on the UC tab and choose
-   **Export → Header String**.
-3. Paste that string into the `cookie` field of `cookies.json`.
-4. Copy your browser's User-Agent (search "what is my user agent") into
-   `user_agent`.
+3. Press <kbd>F12</kbd>, open the **Network** tab, tick **Disable cache** and
+   refresh the page.
+4. Scroll to the very top of the request list and click the first entry,
+   `index.php`.
+5. Under **Headers**, find **Request Headers** and switch it to **Raw**.
+6. Copy the whole `Cookie:` line into the `cookie` field of `cookies.json`.
+7. Copy the `User-Agent:` line from the same list into `user_agent`.
+
+A leading `Cookie:` or `User-Agent:` is fine, it gets stripped. If the line
+contains a `bbpassword=…;` entry, delete that part (see the table below).
 
 ```json
 {
@@ -114,7 +121,7 @@ claude mcp add --scope user unknowncheats -- uv run --directory "$PWD" server.py
 
 | Cookie | Needed | Why |
 | --- | --- | --- |
-| `cf_clearance` | **yes** | The site is behind Cloudflare. It is tied to the IP and User-Agent it was issued to, which is why step 4 matters. |
+| `cf_clearance` | **yes** | The site is behind Cloudflare. It is tied to the IP and User-Agent it was issued to, which is why step 7 matters. |
 | `bbsessionhash` | **yes** | Search and most boards require a login. |
 | `bbpassword` | **no, delete it** | vBulletin's persistent auto-login token. It gives long-lived access to your account, and you don't want that sitting in a file. |
 
@@ -254,7 +261,7 @@ the board index 6 hours), and paging a search re-uses its server-side
 - **Never share `cookies.json`**, and never paste it, a `Cookie:` header or a
   HAR file into an issue, a chat or Discord. Anyone holding it is you on the
   forum. Everyone who uses this runs it with their **own** account.
-- **Leave `bbpassword` out** of the export (see [cookies](#2-export-your-cookies)).
+- **Leave `bbpassword` out** of the export (see [cookies](#2-copy-your-cookies)).
   `uc_session` tells you if it's there.
 - **Know the risk.** Automated access to a logged-in account always carries
   some ban risk, and the forum's rules are the forum's call. The limits above

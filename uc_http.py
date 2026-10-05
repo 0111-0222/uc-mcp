@@ -286,7 +286,10 @@ class Client:
                 "paste your exported UnknownCheats cookie header into it (see README).")
         with open(COOKIE_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        header = (data.get("cookie") or "").strip()
+        # Copied straight out of DevTools, the line still carries its header name.
+        header = re.sub(r"^cookie:\s*", "", (data.get("cookie") or "").strip(), flags=re.I)
+        user_agent = re.sub(r"^user-agent:\s*", "", (data.get("user_agent") or "").strip(),
+                            flags=re.I)
         if not header:
             raise UCError("cookies.json has an empty 'cookie' field.")
         jar = {}
@@ -296,8 +299,8 @@ class Client:
                 name, value = part.split("=", 1)
                 jar[name.strip()] = value.strip()
         headers = {"Accept-Language": "en-US,en;q=0.9"}
-        if data.get("user_agent"):
-            headers["User-Agent"] = data["user_agent"]
+        if user_agent:
+            headers["User-Agent"] = user_agent
         with self._lock:
             session = cr.Session(impersonate="chrome", timeout=45)
             # curl_cffi sends a cookie with no domain to whatever host the

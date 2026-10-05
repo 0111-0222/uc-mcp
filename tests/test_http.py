@@ -81,6 +81,17 @@ def test_absolute_resolves_relative_paths(client):
     assert client._absolute("//evil.com/x") == uc_http.BASE + "evil.com/x"
 
 
+def test_header_names_pasted_from_devtools_are_stripped(client, tmp_path, monkeypatch):
+    f = tmp_path / "cookies.json"
+    f.write_text('{"cookie": "Cookie: bbsessionhash=abc; cf_clearance=def",'
+                 ' "user_agent": "User-Agent: Mozilla/5.0"}', encoding="utf-8")
+    monkeypatch.setattr(uc_http, "COOKIE_FILE", str(f))
+    client.load_cookies()
+    got = {c.name: c.value for c in client._session.cookies.jar}
+    assert got == {"bbsessionhash": "abc", "cf_clearance": "def"}
+    assert client._session.headers["User-Agent"] == "Mozilla/5.0"
+
+
 @pytest.mark.parametrize("path", [
     "https://evil.com?.unknowncheats.me/",
     "HTTPS://evil.com/",
