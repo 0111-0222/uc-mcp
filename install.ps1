@@ -19,9 +19,10 @@ if (-not (Test-Path "cookies.json")) {
     Write-Host ""
     Write-Host "Created cookies.json. Fill it in before use:" -ForegroundColor Yellow
     Write-Host "  1. Log into unknowncheats.me in your browser."
-    Write-Host "  2. Export the site's cookies as a header string (Cookie-Editor -> Export -> Header String)."
-    Write-Host "  3. Paste it into the 'cookie' field, and your browser's User-Agent into 'user_agent'."
-    Write-Host "  The export MUST include cf_clearance and bbsessionhash. Leave bbpassword out."
+    Write-Host "  2. Press F12 -> Network, tick 'Disable cache', refresh, and click the first request (index.php)."
+    Write-Host "  3. Under Headers -> Request Headers -> Raw, copy the whole Cookie line into the 'cookie' field,"
+    Write-Host "     and the User-Agent line into 'user_agent'."
+    Write-Host "  The cookie line MUST include cf_clearance and bbsessionhash. Leave bbpassword out."
 }
 
 $srv = Join-Path $PSScriptRoot "server.py"

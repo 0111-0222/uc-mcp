@@ -16,9 +16,10 @@ if [ ! -f cookies.json ]; then
     cp cookies.example.json cookies.json
     printf '\nCreated cookies.json. Fill it in before use:\n'
     printf '  1. Log into unknowncheats.me in your browser.\n'
-    printf '  2. Export the site'"'"'s cookies as a header string (Cookie-Editor -> Export -> Header String).\n'
-    printf '  3. Paste it into the "cookie" field, and your browser'"'"'s User-Agent into "user_agent".\n'
-    printf '  The export MUST include cf_clearance and bbsessionhash. Leave bbpassword out.\n'
+    printf '  2. Press F12 -> Network, tick "Disable cache", refresh, and click the first request (index.php).\n'
+    printf '  3. Under Headers -> Request Headers -> Raw, copy the whole Cookie line into the "cookie" field,\n'
+    printf '     and the User-Agent line into "user_agent".\n'
+    printf '  The cookie line MUST include cf_clearance and bbsessionhash. Leave bbpassword out.\n'
 fi
 # It holds a live login: readable by you alone.
 chmod 600 cookies.json
