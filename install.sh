@@ -12,17 +12,10 @@ PY="$PWD/.venv/bin/python"
 "$PY" -m pip install -r requirements.txt --quiet
 "$PY" -c "import curl_cffi, bs4, lxml, mcp; print('dependencies OK')"
 
-if [ ! -f cookies.json ]; then
-    cp cookies.example.json cookies.json
-    printf '\nCreated cookies.json. Fill it in before use:\n'
-    printf '  1. Log into unknowncheats.me in your browser.\n'
-    printf '  2. Press F12 -> Network, tick "Disable cache", refresh, and click the first request (index.php).\n'
-    printf '  3. Under Headers -> Request Headers -> Raw, copy the whole Cookie line into the "cookie" field,\n'
-    printf '     and the User-Agent line into "user_agent".\n'
-    printf '  The cookie line MUST include cf_clearance and bbsessionhash. Leave bbpassword out.\n'
-fi
-# It holds a live login: readable by you alone.
-chmod 600 cookies.json
+# A cookies.json from an older setup holds a live login: readable by you alone.
+[ ! -f cookies.json ] || chmod 600 cookies.json
 
-printf '\nRegister the MCP server with Claude Code (all projects):\n'
+printf '\n1. Sign in to the forum (opens a browser window; skip if Firefox is already logged in):\n'
+printf '  "%s" "%s" login\n' "$PY" "$PWD/server.py"
+printf '\n2. Register the MCP server with Claude Code (all projects):\n'
 printf '  claude mcp add --scope user unknowncheats -- "%s" "%s"\n' "$PY" "$PWD/server.py"

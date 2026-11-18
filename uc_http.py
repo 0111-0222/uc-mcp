@@ -33,12 +33,21 @@ from urllib.parse import urlsplit
 
 from curl_cffi import requests as cr
 
+import uc_auth
+import uc_browser
+from uc_browser import Cookies
+
 BASE = "https://www.unknowncheats.me/forum/"
 HOST = "unknowncheats.me"
 COOKIE_DOMAIN = "." + HOST
 ROOT = os.path.dirname(os.path.abspath(__file__))
 COOKIE_FILE = os.environ.get("UC_MCP_COOKIES") or os.path.join(ROOT, "cookies.json")
 CACHE_DB = os.environ.get("UC_MCP_CACHE") or os.path.join(ROOT, ".cache", "uc.sqlite3")
+# Where the login comes from: "login" is the one saved by the sign-in window,
+# "firefox" reads the browser's live cookie store, "file" reads cookies.json.
+# "auto" tries them in that order.
+SOURCES = ("login", "firefox", "file")
+SOURCE = (os.environ.get("UC_MCP_SOURCE") or "auto").strip().lower()
 
 # vBulletin endpoints that change state or expose the account itself. Several
 # act on a plain GET (logout, subscribe, mark-read), so a link planted in a post
@@ -59,6 +68,14 @@ BUDGET_DAY = 1000
 
 # Cache lifetimes in seconds, chosen from how fast each page actually changes.
 TTL = {"thread": 900, "forum": 600, "search": 900, "index": 21600, "raw": 600}
+
+
+# What to do when no source holds a working login. Read by the model inside a
+# tool result and by a person in a terminal, so it names both ways in.
+SIGN_IN = ("Fix: call the uc_login tool (or run `python server.py login` in the uc-mcp "
+           "folder). It opens a browser window on the forum; the user logs in there "
+           "with 'Remember Me' ticked and closes the window, and the login is picked up "
+           "on its own. If that browser still remembers them, no window opens at all.")
 
 
 class UCError(Exception):
@@ -267,11 +284,29 @@ def token_fresh(token: str | None, now: float | None = None) -> bool:
     return ((now or time.time()) - issued) < TOKEN_MAX_AGE
 
 
+def make_session(cookies: Cookies):
+    """A TLS-impersonating session carrying this login, for the forum only."""
+    session = cr.Session(impersonate=cookies.impersonate, timeout=45)
+    # curl_cffi sends a cookie with no domain to whatever host the request
+    # targets. Pinning the domain makes curl's own cookie engine refuse to
+    # attach the login to any other host, redirects included.
+    for name, value in cookies.jar.items():
+        session.cookies.set(name, value, domain=COOKIE_DOMAIN)
+    session.headers.update({"Accept-Language": "en-US,en;q=0.9"})
+    if cookies.user_agent:
+        session.headers["User-Agent"] = cookies.user_agent
+    return session
+
+
 class Client:
     def __init__(self):
         self.store = Store()
         self.limiter = Limiter(self.store)
         self.cookie_names: list[str] = []
+        self.source = self.source_label = ""
+        self._fingerprint = ""
+        self._recover = threading.Lock()
+        self.recoveries = 0
         self._lock = threading.Lock()
         self._session = None
         self._token = None
@@ -279,40 +314,87 @@ class Client:
         self.load_cookies()
 
     # -- session ---------------------------------------------------------
-    def load_cookies(self) -> None:
+    @staticmethod
+    def _from_file() -> Cookies:
         if not os.path.exists(COOKIE_FILE):
-            raise UCError(
-                f"{COOKIE_FILE} missing. Copy cookies.example.json to cookies.json and "
-                "paste your exported UnknownCheats cookie header into it (see README).")
+            raise UCError(f"no {os.path.basename(COOKIE_FILE)}")
         with open(COOKIE_FILE, encoding="utf-8") as f:
             data = json.load(f)
         # Copied straight out of DevTools, the line still carries its header name.
         header = re.sub(r"^cookie:\s*", "", (data.get("cookie") or "").strip(), flags=re.I)
         user_agent = re.sub(r"^user-agent:\s*", "", (data.get("user_agent") or "").strip(),
                             flags=re.I)
-        if not header:
-            raise UCError("cookies.json has an empty 'cookie' field.")
         jar = {}
         for part in header.split(";"):
             part = part.strip()
             if "=" in part:
                 name, value = part.split("=", 1)
                 jar[name.strip()] = value.strip()
-        headers = {"Accept-Language": "en-US,en;q=0.9"}
-        if user_agent:
-            headers["User-Agent"] = user_agent
+        if not jar:
+            raise UCError("cookies.json has no cookies in its 'cookie' field.")
+        # Cloudflare checks that the TLS handshake matches the browser the
+        # User-Agent claims to be.
+        tls = "firefox" if "Firefox/" in user_agent else "chrome"
+        return Cookies(jar, user_agent, tls, "file", os.path.basename(COOKIE_FILE))
+
+    def _candidates(self) -> tuple[list[Cookies], list[str]]:
+        """Every usable login, best first, and why the others are not usable."""
+        found, problems = [], []
+        if SOURCE in ("auto", "login"):
+            try:
+                saved = uc_auth.load()
+            except Exception as e:  # a damaged file must not sink the other sources
+                saved = None
+                problems.append(f"saved login unreadable ({type(e).__name__}: {e})")
+            else:
+                if not saved:
+                    problems.append("nobody has signed in yet")
+            if saved:
+                found.append(saved)
+        firefox_failed = False
+        if SOURCE in ("auto", "firefox"):
+            try:
+                ff = uc_browser.firefox()
+            except Exception as e:  # an unreadable profile must not sink the file
+                ff = None
+                firefox_failed = True
+                problems.append(f"Firefox cookies unreadable ({type(e).__name__}: {e})")
+            if ff:
+                found.append(ff)
+            elif not firefox_failed:
+                problems.append("no Firefox profile is logged into the forum")
+        if SOURCE in ("auto", "file"):
+            try:
+                found.append(self._from_file())
+            except (UCError, OSError, ValueError) as e:
+                problems.append(str(e))
+        if SOURCE not in ("auto", *SOURCES):
+            problems.append(f'UC_MCP_SOURCE="{SOURCE}" is not auto, login, firefox or file')
+        return found, problems
+
+    def load_cookies(self) -> None:
+        found, problems = self._candidates()
+        if not found:
+            raise UCError("not signed in to the forum (" + "; ".join(problems) + "). " + SIGN_IN)
+        self._install(found[0])
+
+    def _install(self, cookies: Cookies) -> None:
+        session = make_session(cookies)
         with self._lock:
-            session = cr.Session(impersonate="chrome", timeout=45)
-            # curl_cffi sends a cookie with no domain to whatever host the
-            # request targets. Pinning the domain makes curl's own cookie engine
-            # refuse to attach the login to any other host, redirects included.
-            for name, value in jar.items():
-                session.cookies.set(name, value, domain=COOKIE_DOMAIN)
-            session.headers.update(headers)
             self._session = session
             self._token = None
-        self.cookie_names = sorted(jar)
+        self.cookie_names = sorted(cookies.jar)
+        self.source, self.source_label = cookies.source, cookies.label
+        self._fingerprint = cookies.fingerprint
         self.store.meta_set("securitytoken", None)
+
+    def _fix(self) -> str:
+        """What the user has to do when no source holds a working login."""
+        if self.source == "firefox":
+            return ("Open https://www.unknowncheats.me/forum/ in Firefox, make sure it "
+                    "loads and you are logged in, then retry: the cookies are re-read "
+                    "from Firefox on their own.")
+        return SIGN_IN
 
     def has_clearance(self) -> bool:
         return "cf_clearance" in self.cookie_names
@@ -325,21 +407,18 @@ class Client:
         if any(m in text[:4000] for m in BLOCK_MARKERS):
             raise BlockedError(
                 "Cloudflare blocked the request. The cf_clearance cookie has expired "
-                "(they are short-lived, often under an hour) or was issued to a different "
-                "IP/User-Agent. Refresh the export in cookies.json from the logged-in "
-                "browser, then call uc_session(reload=True).")
+                "or was issued to a different IP/User-Agent. " + self._fix())
         if "login.php" in url and "do=logout" not in url:
             raise BlockedError(
-                "Redirected to login: the forum session cookie has expired. Re-export "
-                "cookies.json and call uc_session(reload=True).")
+                "Redirected to login: the forum session cookie has expired. "
+                + self._fix())
         m = TOKEN_RE.search(text)
         token = m.group(1) if m else None
         if token in ("guest", "") or (
                 token is None and not any(mk in text for mk in LOGGED_IN_MARKERS)):
             raise BlockedError(
                 "Page loaded but the session is browsing as a guest. Most of this forum, "
-                "search included, is login-gated. Re-export cookies.json including "
-                "bbsessionhash, then call uc_session(reload=True).")
+                "search included, is login-gated. " + self._fix())
 
     def _learn_tz(self, text: str) -> None:
         from uc_dates import detect_tz_offset
@@ -374,6 +453,45 @@ class Client:
         return check_url(url)
 
     def _send(self, method: str, url: str, data: dict | None = None) -> tuple[str, str]:
+        """Send, and on a dead login pick up a newer one and try again.
+
+        Cloudflare reissues cf_clearance while the user browses, so the copy
+        loaded at startup dies long before the browser's does. Rather than
+        report that, re-read every source and retry with any login whose values
+        differ from the one that just failed. Each is tried once, so a login
+        that is really gone still surfaces as the original error.
+        """
+        try:
+            return self._send_once(method, url, data)
+        except BlockedError as blocked:
+            failed = self._fingerprint
+            with self._recover:
+                if self._fingerprint != failed:  # another thread already recovered
+                    return self._send_once(method, url, data)
+                tried = {failed}
+                options = []
+                for cookies in self._candidates()[0]:
+                    options.append(cookies)
+                    # A clearance Cloudflare refuses from this client draws a
+                    # challenge that sending none would not (see uc_auth.settle).
+                    bare = cookies.without("cf_clearance")
+                    if bare.can_log_in():
+                        options.append(bare)
+                for cookies in options:
+                    if cookies.fingerprint in tried:
+                        continue
+                    tried.add(cookies.fingerprint)
+                    self._install(cookies)
+                    self.limiter.acquire("meta")
+                    try:
+                        result = self._send_once(method, url, data)
+                    except BlockedError:
+                        continue
+                    self.recoveries += 1
+                    return result
+            raise blocked
+
+    def _send_once(self, method: str, url: str, data: dict | None = None) -> tuple[str, str]:
         self.store.record_hit()
         with self._lock:
             session = self._session
@@ -396,7 +514,7 @@ class Client:
                 "HTTP 429 from the forum: rate limited server-side. Wait several minutes.")
         if resp.status_code in (403, 503):
             self._check(text, final)
-            raise BlockedError(f"HTTP {resp.status_code} from Cloudflare. Refresh cookies.json.")
+            raise BlockedError(f"HTTP {resp.status_code} from Cloudflare. " + self._fix())
         if resp.status_code >= 400:
             raise UCError(f"HTTP {resp.status_code} for {final}")
         self._check(text, final)
@@ -457,7 +575,7 @@ class Client:
         if not self._token:
             raise BlockedError(
                 "No logged-in security token on search.php — the session cookie is not "
-                "authenticating. Re-export cookies.json.")
+                "authenticating. " + self._fix())
         return self._token
 
 

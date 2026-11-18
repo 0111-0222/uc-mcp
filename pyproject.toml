@@ -1,6 +1,6 @@
 [project]
 name = "uc-mcp"
-version = "1.1.0"
+version = "1.2.0"
 description = "Read-only, date-aware MCP server for searching the UnknownCheats forum with your own session."
 readme = "README.md"
 license = "MIT"
@@ -32,4 +32,4 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["server", "uc_dates", "uc_http", "uc_parse", "uc_render"]
+known-first-party = ["server", "uc_browser", "uc_dates", "uc_http", "uc_parse", "uc_render"]

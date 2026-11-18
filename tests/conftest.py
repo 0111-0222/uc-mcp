@@ -25,6 +25,13 @@ _cookies.write_text(json.dumps({
     "user_agent": "uc-mcp-tests",
 }), encoding="utf-8")
 os.environ["UC_MCP_COOKIES"] = str(_cookies)
+# Never the developer's real browser login: the suite reads the file above only.
+os.environ["UC_MCP_SOURCE"] = "file"
+os.environ.pop("UC_MCP_FIREFOX_PROFILE", None)
+os.environ.pop("UC_MCP_USER_AGENT", None)
+# Nor the developer's saved login or sign-in profile.
+os.environ["UC_MCP_HOME"] = str(_tmp / "home")
+os.environ.pop("UC_MCP_BROWSER", None)
 os.environ["UC_MCP_CACHE"] = str(_tmp / "uc.sqlite3")
 
 # Every relative date in the fixtures is read against this instant.

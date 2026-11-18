@@ -1,6 +1,6 @@
 """uc-mcp — read-only MCP access to the UnknownCheats forum.
 
-Five tools, deliberately. Every tool description is paid for in context on every
+Six tools, deliberately. Every tool description is paid for in context on every
 turn of every session, so the surface is kept small and the wording is spent on
 telling the model *when* to reach for it rather than on restating the arguments.
 
@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+import uc_auth
 import uc_dates
 import uc_parse as P
 import uc_render as R
@@ -59,19 +60,22 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                             idempotentHint=True, openWorldHint=True)
 
 
-def _tool(fn):
+def _tool(fn=None, *, annotations: ToolAnnotations = READ_ONLY):
     """Register a tool whose failures come back as readable text.
 
     A parse slip or an expired cookie must not surface as a protocol error: the
     model needs the message to tell the user what to fix.
     """
+    if fn is None:
+        return functools.partial(_tool, annotations=annotations)
+
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except Exception as e:
             return f"uc-mcp error: {e}"
-    return mcp.tool(annotations=READ_ONLY)(wrapper)
+    return mcp.tool(annotations=annotations)(wrapper)
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -362,9 +366,9 @@ def uc_fetch(path: str, chars: int = 8000) -> str:
 def uc_session(reload: bool = False, clear_cache: bool = False) -> str:
     """Session health, request budget and cache state.
 
-    Call with reload=True after re-exporting cookies.json — the cf_clearance
-    cookie is short-lived, so a run of Cloudflare errors is normally fixed by
-    refreshing that file and reloading, with no restart needed.
+    The login is re-read automatically whenever a request is blocked, so there
+    is normally nothing to refresh. reload=True forces a re-read and probes the
+    session with one live request. If the login is dead, uc_login fixes it.
     """
     if reload:
         reset_client()
@@ -378,13 +382,21 @@ def uc_session(reload: bool = False, clear_cache: bool = False) -> str:
         probe = "logged in, Cloudflare passed"
     info = {
         "session": probe,
+        "source": c.source_label + {
+            "firefox": " (read live, re-read automatically when blocked)",
+            "login": " (from the sign-in window; uc_login renews it)",
+        }.get(c.source, " (manual export; uc_login replaces it with a login that lasts)"),
+        "auto_recoveries": str(c.recoveries),
         "cookies": ", ".join(c.cookie_names) or "none",
         "search_token": c.token_status(),
         "cf_clearance": "present" if c.has_clearance() else
-                        "MISSING — Cloudflare will block every request",
-        "bbpassword": ("present — a long-lived login token; it can be left out of "
-                       "the export (see README)") if c.has_persistent_login() else
-                      "absent (session expires on its own)",
+                        "absent — fine unless Cloudflare starts challenging",
+        "bbpassword": (
+            "absent (session expires on its own)" if not c.has_persistent_login() else
+            "read from Firefox, kept in memory only" if c.source == "firefox" else
+            "present (what keeps the login alive between sessions), stored sealed "
+            "outside the checkout" if c.source == "login" else
+            "present in cookies.json in plain text — uc_login stores it safely instead"),
         "forum_timezone": f"GMT{c.tz_offset:+d} (dates are converted to UTC)",
         "requests_this_hour": f"{hour}/{BUDGET_HOUR}",
         "requests_today": f"{day}/{BUDGET_DAY}",
@@ -398,7 +410,32 @@ def uc_session(reload: bool = False, clear_cache: bool = False) -> str:
     return R.status(info)
 
 
+# Opens a window on the user's machine and saves a login: not a read.
+@_tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                   idempotentHint=True, openWorldHint=True))
+def uc_login(wait: int = 180) -> str:
+    """Open a browser window so the user can sign in to the forum.
+
+    Call this when another tool reports that the login is missing, expired or
+    blocked by Cloudflare. If the sign-in browser still remembers them this
+    returns at once with no window. Otherwise tell the user a browser window is
+    opening: they log in there with "Remember Me" ticked and then close it,
+    and the other tools work again. No password or cookie passes through
+    this conversation. `wait` is how many seconds to give them.
+    """
+    notes: list[str] = []
+    try:
+        uc_auth.sign_in(timeout=_clamp(wait, 30, 600), say=notes.append)
+    except uc_auth.LoginError as e:
+        return f"uc-mcp error: login not completed: {e}"
+    reset_client()
+    return notes[-1] + " The forum tools will use this login from now on."
+
+
 def main() -> None:
+    if len(sys.argv) > 1:
+        import uc_cli
+        raise SystemExit(uc_cli.run(sys.argv[1:], status=lambda: uc_session(reload=True)))
     mcp.run()
 
 

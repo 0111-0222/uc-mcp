@@ -201,7 +201,8 @@ def thread(posts: list[Post], meta: Listing, path: str, page: int,
 
 
 def status(info: dict) -> str:
-    order = ["session", "cookies", "cf_clearance", "bbpassword", "forum_timezone",
+    order = ["session", "source", "auto_recoveries", "cookies", "cf_clearance",
+             "bbpassword", "forum_timezone",
              "requests_this_hour",
              "requests_today", "cached_pages", "cache_newest", "limits"]
     width = max(len(k) for k in order)
