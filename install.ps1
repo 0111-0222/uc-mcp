@@ -14,18 +14,10 @@ $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 & $py -m pip install -r requirements.txt --quiet
 & $py -c "import curl_cffi, bs4, lxml, mcp; print('dependencies OK')"
 
-if (-not (Test-Path "cookies.json")) {
-    Copy-Item "cookies.example.json" "cookies.json"
-    Write-Host ""
-    Write-Host "Created cookies.json. Fill it in before use:" -ForegroundColor Yellow
-    Write-Host "  1. Log into unknowncheats.me in your browser."
-    Write-Host "  2. Press F12 -> Network, tick 'Disable cache', refresh, and click the first request (index.php)."
-    Write-Host "  3. Under Headers -> Request Headers -> Raw, copy the whole Cookie line into the 'cookie' field,"
-    Write-Host "     and the User-Agent line into 'user_agent'."
-    Write-Host "  The cookie line MUST include cf_clearance and bbsessionhash. Leave bbpassword out."
-}
-
 $srv = Join-Path $PSScriptRoot "server.py"
 Write-Host ""
-Write-Host "Register the MCP server with Claude Code (all projects):" -ForegroundColor Green
+Write-Host "1. Sign in to the forum (opens a browser window; skip if Firefox is already logged in):" -ForegroundColor Green
+Write-Host ("  & `"{0}`" `"{1}`" login" -f $py, $srv)
+Write-Host ""
+Write-Host "2. Register the MCP server with Claude Code (all projects):" -ForegroundColor Green
 Write-Host ("  claude mcp add --scope user unknowncheats -- `"{0}`" `"{1}`"" -f $py, $srv)

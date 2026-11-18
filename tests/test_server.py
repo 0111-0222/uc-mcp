@@ -18,12 +18,20 @@ def _tools():
     return {t.name: t for t in asyncio.run(server.mcp.list_tools())}
 
 
-def test_exactly_five_read_only_tools():
+def test_exactly_five_read_only_tools_and_the_login():
     tools = _tools()
-    assert set(tools) == TOOLS
-    for tool in tools.values():
-        assert tool.annotations.readOnlyHint is True
+    assert set(tools) == TOOLS | {"uc_login"}
+    for name, tool in tools.items():
+        # Opening the sign-in window is the one thing that is not a read.
+        assert tool.annotations.readOnlyHint is (name != "uc_login")
         assert tool.annotations.destructiveHint is False
+
+
+def test_login_tool_reports_instead_of_raising(monkeypatch):
+    def no_browser(**kwargs):
+        raise server.uc_auth.LoginError("no Chrome, Edge, Brave or Chromium found")
+    monkeypatch.setattr(server.uc_auth, "sign_in", no_browser)
+    assert "login not completed: no Chrome" in server.uc_login()
 
 
 def test_schemas_survive_the_error_wrapper():
@@ -66,6 +74,7 @@ def test_session_reports_without_a_request():
     assert "not checked" in out
     assert "cf_clearance" in out and "present" in out
     assert "bbpassword" in out and "absent" in out
+    assert "source" in out and "manual export" in out
 
 
 def test_render_flags_stale_content_and_result_cap(fixture, now):
